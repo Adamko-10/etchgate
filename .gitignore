@@ -1,0 +1,25 @@
+# Gradle / build output
+.gradle/
+build/
+out/
+run/
+runs/
+*.class
+
+# the Etched jar you compile against (never committed)
+libs/*.jar
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+bin/
+
+# OS
+.DS_Store
+Thumbs.db

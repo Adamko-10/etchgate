@@ -1,0 +1,107 @@
+plugins {
+    id 'java'
+    id 'eclipse'
+    id 'net.neoforged.moddev' version '2.0.144'
+}
+
+version = mod_version
+group = mod_group_id
+base.archivesName = mod_id
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+neoForge {
+    version = project.neo_version
+    runs {
+        client { client() }
+        server { server(); programArgument '--nogui' }
+    }
+    mods { "${mod_id}" { sourceSet sourceSets.main } }
+}
+
+// ---------------------------------------------------------------------------
+// Etched is compiled against as a local, compile-only jar and is never bundled:
+// the copy in your mods folder is what loads at runtime. Put etched-5.x.jar in
+// libs/ (or pass -Petched_jar=path). A jar only counts if it really contains
+// the class this mod hooks; a file merely named etched-*.jar proves nothing.
+// ---------------------------------------------------------------------------
+def ETCHED_MARKER = 'gg/moonflower/etched/common/network/play/handler/EtchedServerPlayPacketHandler.class'
+
+boolean jarHasClass(java.io.File f, String entry) {
+    if (f == null || !f.isFile()) return false
+    try {
+        def zf = new java.util.zip.ZipFile(f)
+        try {
+            return zf.getEntry(entry) != null
+        } finally {
+            zf.close()
+        }
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+java.io.File findEtchedJar(org.gradle.api.Project p, String marker) {
+    def home = System.getProperty('user.home')
+    def candidates = new LinkedHashSet<java.io.File>()
+    if (p.hasProperty('etched_jar')) candidates.add(p.file(p.property('etched_jar')))
+    [ new java.io.File(p.projectDir, 'libs').absolutePath,
+      p.projectDir.absolutePath,
+      "${home}/.minecraft/mods",
+      "${home}/AppData/Roaming/.minecraft/mods",
+      "${home}/Downloads" ].each { String dir ->
+        def d = new java.io.File(dir)
+        if (!d.isDirectory()) return
+        def kids = d.listFiles()
+        if (kids == null) return
+        kids.each { java.io.File f ->
+            if (f.isFile()
+                    && f.name.toLowerCase().endsWith('.jar')
+                    && f.name.toLowerCase().contains('etched')) candidates.add(f)
+        }
+    }
+    def report = []
+    java.io.File found = null
+    candidates.each { java.io.File f ->
+        boolean ok = jarHasClass(f, marker)
+        report.add(String.format('  %-8s %s', ok ? 'ok' : 'no class', f.absolutePath))
+        if (found == null && ok) found = f
+    }
+    if (found == null) {
+        throw new GradleException(
+            "Could not find the Etched jar to compile against.\n" +
+            "Checked (looking for ${marker}):\n" +
+            (report.isEmpty() ? '  (no etched*.jar found in any searched folder)' : report.join('\n')) + "\n\n" +
+            "Fix: drop the Etched 5.x jar into this project's libs/ folder, or run\n" +
+            "     gradlew build -Petched_jar=C:/path/to/etched-5.1.0.jar")
+    }
+    return found
+}
+
+def etchedJar = findEtchedJar(project, ETCHED_MARKER)
+logger.lifecycle("etchgate: compiling against ${etchedJar.absolutePath}")
+
+dependencies {
+    compileOnly files(etchedJar)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xmaxerrs' << '500'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var props = [minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
+                 neo_version: neo_version, neo_version_range: neo_version_range,
+                 loader_version_range: loader_version_range, mod_id: mod_id, mod_name: mod_name,
+                 mod_license: mod_license, mod_version: mod_version, mod_authors: mod_authors,
+                 mod_description: mod_description]
+    inputs.properties props
+    filesMatching(['META-INF/neoforge.mods.toml']) { expand props }
+}
+
+tasks.withType(Jar).configureEach { manifest { attributes(['Implementation-Version': project.version]) } }
